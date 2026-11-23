@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Smart Shoes Guide</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{--bg:#0b1220;--card:#131c31;--line:#22304f;--txt:#eaf0ff;--mut:#8da0c4;--pri:#ffc400;--ok:#22c55e;--bad:#ef4444;--blue:#3b82f6}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:radial-gradient(1200px 500px at 50% -10%,#1b2c55 0,#0b1220 60%) fixed;color:var(--txt);padding-bottom:30px}
+.w{padding:14px;max-width:560px;margin:auto}
+header{display:flex;align-items:center;gap:12px;padding:8px 2px 14px}
+header img{width:46px;height:46px;border-radius:12px}
+header h1{font-size:21px;margin:0}header p{margin:2px 0 0;color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;margin:10px 0}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:2px 4px 8px}
+button{width:100%;padding:17px;margin:5px 0;font-size:18px;font-weight:700;border:0;border-radius:14px;background:var(--pri);color:#111;box-shadow:0 4px 14px #0006;transition:transform .08s}
+button:active{transform:scale(.97)}
+button.g{background:linear-gradient(135deg,#22c55e,#16a34a);color:#04200f}
+button.r{background:linear-gradient(135deg,#ef4444,#b91c1c);color:#fff}
+button.b{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff}
+button.o{background:#1c2744;color:var(--txt);border:1px solid var(--line);box-shadow:none}
+.row{display:flex;gap:8px}.row button{font-size:16px;padding:20px 6px}
+input[type=text],input[type=email],input:not([type]){width:100%;padding:15px;font-size:16px;border-radius:12px;border:1px solid var(--line);background:#0e1730;color:var(--txt);margin:5px 0;outline:0}
+input:focus{border-color:var(--pri)}
+#st{background:#0e1730;border:1px solid var(--line);border-radius:12px;padding:12px;margin:6px 0;font-size:15px;color:var(--mut)}
+#log{background:#0e1730;border-radius:12px;padding:10px;font-size:13px;max-height:120px;overflow:auto;color:var(--mut)}
+#map{height:250px;border-radius:14px}
+summary{font-weight:700;padding:6px;cursor:pointer}
+p{color:var(--mut);font-size:14px}
+</style>
+</head>
+<body>
+<div class="w">
+<header><img src="icon-192.png" alt=""><div><h1>Smart Shoes Guide</h1><p>Voice navigation &amp; obstacle alerts</p></div></header>
+
+<div class="card">
+<h2>Shoes</h2>
+<button class="g" id="conn" aria-label="Connect shoes by Bluetooth">🔗 Connect Shoes</button>
+<div id="st">Shoes: not connected</div>
+</div>
+
+<div class="card">
+<h2>Navigate</h2>
+<button class="b" id="mic" aria-label="Voice command">🎤 Speak a Command</button>
+<div class="row"><button id="goLib">📚 Library</button><button id="goHos">🏠 Hostel</button></div>
+<input id="q" placeholder="Search any place (e.g. NED University)">
+<button class="o" id="goQ">🔍 Search &amp; Navigate</button>
+<button class="r" id="stop">⏹ Stop Navigation</button>
+<div id="map"></div>
+</div>
+
+<div class="card">
+<details><summary>⚙️ Setup &amp; Testing</summary>
+<p>Library par khare ho kar:</p><button class="o" id="setLib">📍 Save location as LIBRARY</button>
+<p>Hostel par khare ho kar:</p><button class="o" id="setHos">📍 Save location as HOSTEL</button>
+<p>Emergency email (fall alert ke liye):</p>
+<input id="mail" type="email" placeholder="parents@gmail.com">
+<button class="o" id="t1">Test: obstacle alert</button>
+<button class="o" id="t2">Test: water alert</button>
+<button class="r" id="t3">Test: fall alert</button>
+<label style="color:var(--mut);display:block;margin-top:8px"><input type="checkbox" id="ur" style="width:auto"> Urdu voice</label>
+</details>
+</div>
+
+<div class="card"><h2>Activity</h2><div id="log"></div></div>
+</div>
+
+<div id="fall" onclick="cancelFall()" style="display:none;position:fixed;inset:0;background:#b91c1c;z-index:9999;flex-direction:column;align-items:center;justify-content:center;text-align:center;font-size:30px;font-weight:800;padding:20px">
+<div>⚠️ FALL DETECTED</div><div id="fc" style="font-size:110px">15</div><div>Touch anywhere or say "I am okay"</div></div>
+<script>
+// ===== BLE UUIDs (ESP32 code mein same hone chahiye) =====
+const SVC='4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const CHR='beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+const $=id=>document.getElementById(id);
+const log=t=>{const d=$('log');d.innerHTML=new Date().toLocaleTimeString()+' '+t+'<br>'+d.innerHTML};
+
+// ===== Voice =====
+let lastMsg='',lastT=0;
+function say(t,force){
+  const now=Date.now();
+  if(!force&&t===lastMsg&&now-lastT<3500)return;
+  lastMsg=t;lastT=now;log('🔊 '+t);
+  try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);
+    u.lang=$('ur').checked?'ur-PK':'en-US';u.rate=.95;speechSynthesis.speak(u);}catch(e){}
+  if(navigator.vibrate)navigator.vibrate(force?[100]:[200,100,200]);
+}
+
+// ===== Shoes data handling =====
+// ESP32 text bhejta hai: "OBS:85" (cm), "WATER", "DROP", "MOTION", "OK"
+function handle(s){
+  s=s.trim();log('📡 '+s);
+  const [k,v]=s.split(':');
+  if(k==='OBS'){const d=+v;
+    if(d<50)say('Danger! Obstacle very close, '+d+' centimeters');
+    else if(d<120)say('Obstacle ahead, '+d+' centimeters');
+    else if(d<250)say('Something ahead, about '+Math.round(d/100)+' meters');
+  }
+  else if(k==='WATER')say('Water ahead, be careful');
+  else if(k==='DROP')say('Warning! Step or hole ahead');
+  else if(k==='MOTION')say('Moving object ahead');
+  else if(k==='FALL')startFall();
+}
+// ===== Fall detection + email (EmailJS) =====
+const EMAILJS={service:'service_28v4l8c',template:'template_okdaqh5',key:'OQRAJlhwzVsemjoaY'};
+$('mail').value=localStorage.getItem('mail')||'';
+$('mail').oninput=()=>localStorage.setItem('mail',$('mail').value);
+$('t3').onclick=()=>handle('FALL');
+function listenOk(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return;
+  fallSR=new SR();fallSR.lang='en-US';fallSR.continuous=true;
+  fallSR.onresult=e=>{const t=e.results[e.results.length-1][0].transcript.toLowerCase();
+    if(/ok|okay|fine|yes|theek/.test(t))cancelFall()};
+  fallSR.onend=()=>{if(fallTimer)try{fallSR.start()}catch(e){}};
+  try{fallSR.start()}catch(e){}
+}
+function startFall(){
+  if(fallTimer)return;
+  fallLeft=15;$('fc').textContent=fallLeft;$('fall').style.display='flex';
+  say('Fall detected! Are you okay? Touch the screen or say I am okay.',1);
+  setTimeout(listenOk,3500);
+  fallTimer=setInterval(()=>{fallLeft--;$('fc').textContent=fallLeft;
+    if(navigator.vibrate)navigator.vibrate(400);
+    if(fallLeft<=0)sendAlert();},1000);
+}
+function cancelFall(){
+  if(!fallTimer)return;
+  clearInterval(fallTimer);fallTimer=null;
+  try{fallSR&&fallSR.stop()}catch(e){}
+  $('fall').style.display='none';say('Alert cancelled. Glad you are okay.',1);
+}
+async function sendAlert(){
+  clearInterval(fallTimer);fallTimer=null;
+  try{fallSR&&fallSR.stop()}catch(e){}
+  $('fall').style.display='none';
+  let link='Location unavailable';
+  try{const p=await getPos();link='https://maps.google.com/?q='+p[0]+','+p[1]}catch(e){}
+  const to=$('mail').value.trim();
+  if(!to){say('Email address set nahi hai',1);return}
+  try{
+    const r=await fetch('https://api.emailjs.com/api/v1.0/email/send',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({service_id:EMAILJS.service,template_id:EMAILJS.template,user_id:EMAILJS.key,
+        template_params:{to_email:to,message:'EMERGENCY: The blind user may have fallen and did not respond.',
+          map_link:link,time:new Date().toLocaleString()}})});
+    if(!r.ok)throw new Error(await r.text());
+    say('Emergency email has been sent',1);
+  }catch(e){say('Email send failed',1);log('Email error: '+e.message)}
+}
+
+let dev=null;
+$('conn').onclick=async()=>{
+  try{
+    if(!navigator.bluetooth){say('Bluetooth supported nahi. Android Chrome use karein.',1);return}
+    dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'ESP32'}],optionalServices:[SVC]});
+    dev.addEventListener('gattserverdisconnected',()=>{$('st').textContent='Shoes: disconnected';say('Shoes disconnected',1)});
+    const sv=await dev.gatt.connect();
+    const c=await (await sv.getPrimaryService(SVC)).getCharacteristic(CHR);
+    await c.startNotifications();
+    const dec=new TextDecoder();
+    c.addEventListener('characteristicvaluechanged',e=>handle(dec.decode(e.target.value)));
+    $('st').textContent='Shoes: connected ✅ ('+dev.name+')';
+    say('Shoes connected',1);
+  }catch(e){log('BLE error: '+e.message);$('st').textContent='Connect nahi hua: '+e.message}
+};
+$('t1').onclick=()=>handle('OBS:40');
+$('t2').onclick=()=>handle('WATER');
+
+// ===== Map & places =====
+const map=L.map('map').setView([24.86,67.0],15);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(map);
+let me=null,line=null,dest=null;
+const places=JSON.parse(localStorage.getItem('places')||'{}');
+const savePlaces=()=>localStorage.setItem('places',JSON.stringify(places));
+function getPos(){return new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(p=>res([p.coords.latitude,p.coords.longitude]),rej,{enableHighAccuracy:true}))}
+async function savePlace(n){try{places[n]=await getPos();savePlaces();say(n+' location saved',1)}catch(e){say('Location nahi mili',1)}}
+$('setLib').onclick=()=>savePlace('library');
+$('setHos').onclick=()=>savePlace('hostel');
+$('goLib').onclick=()=>goPlace('library');
+$('goHos').onclick=()=>goPlace('hostel');
+function goPlace(n){if(!places[n]){say(n+' ki location save nahi hai. Setup mein save karein.',1);return}navigate(places[n],n)}
+$('goQ').onclick=async()=>{
+  const q=$('q').value.trim();if(!q)return;
+  try{const r=await(await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q))).json();
+    if(!r.length){say('Jagah nahi mili',1);return}
+    navigate([+r[0].lat,+r[0].lon],q);
+  }catch(e){say('Internet check karein',1)}
+};
+
+// ===== Navigation =====
+let steps=[],si=0,watch=null;
+const hav=(a,b)=>{const R=6371000,t=x=>x*Math.PI/180,dl=t(b[0]-a[0]),dn=t(b[1]-a[1]);
+  const h=Math.sin(dl/2)**2+Math.cos(t(a[0]))*Math.cos(t(b[0]))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
+function stepText(s){
+  const m=s.maneuver;if(m.type==='arrive')return 'You have arrived at your destination';
+  const dir=m.modifier||'straight';
+  return (m.type==='depart'?'Start walking '+(s.name?'on '+s.name:'')+' ':'Turn '+dir+' '+(s.name?'onto '+s.name:''))+'';
+}
+async function navigate(to,name){
+  try{
+    say('Route dhoond raha hoon '+name+' tak',1);
+    const from=await getPos();dest=to;
+    const u=`https://router.project-osrm.org/route/v1/foot/${from[1]},${from[0]};${to[1]},${to[0]}?steps=true&overview=full&geometries=geojson`;
+    const r=await(await fetch(u)).json();
+    if(!r.routes||!r.routes.length){say('Route nahi mila',1);return}
+    const rt=r.routes[0];steps=rt.legs[0].steps;si=0;
+    if(line)map.removeLayer(line);
+    line=L.geoJSON(rt.geometry,{style:{color:'#3498db',weight:6}}).addTo(map);
+    map.fitBounds(line.getBounds());
+    say('Navigation shuru. Total distance '+Math.round(rt.distance)+' meters, taqreeban '+Math.round(rt.duration/60)+' minutes.',1);
+    setTimeout(()=>announceStep(),3500);
+    if(watch)navigator.geolocation.clearWatch(watch);
+    watch=navigator.geolocation.watchPosition(onPos,e=>log('GPS: '+e.message),{enableHighAccuracy:true,maximumAge:1000});
+  }catch(e){say('Navigation error. Internet aur GPS check karein.',1)}
+}
+function announceStep(){
+  if(si>=steps.length)return;
+  const s=steps[si];
+  const next=steps[si+1]||s;
+  say((si===0?'':'')+stepText(next)+(next.maneuver.type==='arrive'?'':' in '+Math.round(s.distance)+' meters'),1);
+}
+function onPos(p){
+  const pos=[p.coords.latitude,p.coords.longitude];
+  if(!me)me=L.circleMarker(pos,{radius:8,color:'#e74c3c'}).addTo(map);else me.setLatLng(pos);
+  if(!steps.length)return;
+  const nxt=steps[si+1];
+  if(!nxt){return}
+  const mp=[nxt.maneuver.location[1],nxt.maneuver.location[0]];
+  const d=hav(pos,mp);
+  if(d<20){
+    si++;
+    if(nxt.maneuver.type==='arrive'){say('You have arrived at your destination. Navigation complete.',1);stopNav(true);return}
+    announceStep();
+  }else if(d<60&&!nxt._warned){nxt._warned=1;say(stepText(nxt)+' in '+Math.round(d)+' meters',1)}
+}
+function stopNav(q){if(watch)navigator.geolocation.clearWatch(watch);watch=null;steps=[];if(line)map.removeLayer(line);if(!q)say('Navigation stopped',1)}
+$('stop').onclick=()=>stopNav();
+
+// ===== Voice commands =====
+$('mic').onclick=()=>{
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){say('Voice command support nahi',1);return}
+  const r=new SR();r.lang='en-US';
+  r.onresult=e=>{const t=e.results[0][0].transcript.toLowerCase();log('🎤 '+t);
+    if(t.includes('library')||t.includes('لائبریری'))goPlace('library');
+    else if(t.includes('hostel')||t.includes('ہاسٹل'))goPlace('hostel');
+    else if(t.includes('stop')||t.includes('ruk'))stopNav();
+    else say('Samajh nahi aya: '+t,1)};
+  r.onerror=e=>log('Mic error '+e.error);
+  say('Boliye',1);setTimeout(()=>r.start(),900);
+};
+if('wakeLock' in navigator)navigator.wakeLock.request('screen').catch(()=>{});
+window.addEventListener('load',()=>setTimeout(()=>say('Smart shoes guide ready. Connect button dabayein.',1),600));
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
